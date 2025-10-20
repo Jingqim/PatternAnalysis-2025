@@ -1,3 +1,4 @@
 /data/
 keras_png_slices_data.zip
 /keras_png_slices_data/
+__pycache__
