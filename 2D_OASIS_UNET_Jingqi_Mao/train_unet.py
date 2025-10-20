@@ -1,5 +1,5 @@
 # train_unet.py
-# Put this file next to your dataset.py (which provides create_dataloaders_here)
+# Uses tqdm progress bars, early-stops at Dice ≥ 0.90, saves model+plot to a timestamped folder.
 
 import os
 from pathlib import Path
@@ -11,17 +11,15 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 import matplotlib
-matplotlib.use("Agg")  # headless
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
-# =========================
-# 1) Data: import loaders
-# =========================
-from dataset import create_dataloaders_here
+from dataset import create_dataloaders_here  # your dataloader
 
-# =========================
-# 2) Simple U-Net
-# =========================
+# -------------------
+# Simple U-Net
+# -------------------
 def conv_block(cin, cout):
     return nn.Sequential(
         nn.Conv2d(cin, cout, 3, padding=1, bias=False),
@@ -63,9 +61,9 @@ class UNet2D(nn.Module):
         d1 = self.d1(torch.cat([self.u1(d2), e1], 1))
         return self.out(d1)  # logits [B,C,H,W]
 
-# =========================
-# 3) Loss & metrics
-# =========================
+# -------------------
+# Loss & metric
+# -------------------
 class DiceCE(nn.Module):
     def __init__(self, n_classes: int):
         super().__init__()
@@ -85,7 +83,7 @@ class DiceCE(nn.Module):
 def eval_mean_dice(model: nn.Module, loader: DataLoader, n_classes: int, device: str) -> float:
     model.eval()
     dices = []
-    for x, y in loader:
+    for x, y in tqdm(loader, desc="Validating", leave=False):
         x, y = x.to(device), y.to(device)
         p = F.softmax(model(x), dim=1)                              # [B,C,H,W]
         oh = F.one_hot(y, n_classes).permute(0,3,1,2).float()       # [B,C,H,W]
@@ -99,9 +97,9 @@ def eval_mean_dice(model: nn.Module, loader: DataLoader, n_classes: int, device:
     per_class = torch.cat(dices,0).mean(0)                          # [C]
     return float(per_class.mean())
 
-# =========================
-# 4) Trainer
-# =========================
+# -------------------
+# Trainer
+# -------------------
 def train_unet(
     epochs: int = 10,
     batch_size: int = 8,
@@ -112,31 +110,28 @@ def train_unet(
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Dataloaders
-    train_ld, val_ld, test_ld = create_dataloaders_here(
+    train_ld, val_ld, _ = create_dataloaders_here(
         batch_size=batch_size, size_hw=size_hw, augment_train=True
     )
-    print(f"Train samples: {len(train_ld.dataset)} | Val samples: {len(val_ld.dataset)}")
 
-    # Infer number of classes from a small batch (max label + 1)
+    # infer n_classes from training labels
     xb, yb = next(iter(train_ld))
     n_classes = int(yb.max().item()) + 1
-    print(f"Detected n_classes={n_classes}")
+    print(f"Train samples: {len(train_ld.dataset)} | Val samples: {len(val_ld.dataset)} | Classes: {n_classes}")
 
-    # Model, Loss, Optim
     model = UNet2D(in_ch=1, n_classes=n_classes, base=base_channels).to(device)
     loss_fn = DiceCE(n_classes)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
 
-    # Bookkeeping
     best_val = -1.0
-    history = []
+    dice_hist = []
 
     for ep in range(1, epochs+1):
         model.train()
         running = 0.0
 
-        for xb, yb in train_ld:
+        pbar = tqdm(train_ld, desc=f"Epoch {ep}/{epochs}", unit="batch")
+        for xb, yb in pbar:
             xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad(set_to_none=True)
             logits = model(xb)
@@ -144,58 +139,44 @@ def train_unet(
             loss.backward()
             opt.step()
             running += loss.item()
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = running / max(1, len(train_ld))
         val_dice = eval_mean_dice(model, val_ld, n_classes, device)
-        history.append(val_dice)
+        dice_hist.append(val_dice)
+        tqdm.write(f"Epoch {ep:02d}: train loss {avg_loss:.4f} | val mean Dice {val_dice:.4f}")
 
-        print(f"Epoch {ep:02d}/{epochs} | train loss {avg_loss:.4f} | val mean Dice {val_dice:.4f}")
-
-        # Early stop/save if target met
         if val_dice >= target_dice:
-            print(f"Early stop: reached Dice {val_dice:.4f} ≥ {target_dice}")
-            _save_artifacts(model, history, val_dice, ep)
+            tqdm.write(f"Early stop: Dice {val_dice:.4f} ≥ {target_dice}")
+            _save_artifacts(model, dice_hist, val_dice, ep)
             return
 
-        # Track best (optional)
         if val_dice > best_val:
             best_val = val_dice
 
-    # Finished all epochs; save with final metric
-    final_dice = history[-1] if history else 0.0
-    _save_artifacts(model, history, final_dice, epochs)
+    # end of training
+    final_dice = dice_hist[-1] if dice_hist else 0.0
+    _save_artifacts(model, dice_hist, final_dice, epochs)
 
 def _save_artifacts(model: nn.Module, dice_hist, val_dice: float, epochs_done: int):
-    """
-    Save model and Dice curve to a folder:
-      oasis_unet_model_YYYYmmdd_HHMMSS_dice{X.XXX}_ep{NN}
-    """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"oasis_unet_model_{ts}_dice{val_dice:.3f}_ep{epochs_done:02d}"
-    out_dir = Path(name)
+    out_dir = Path(f"oasis_unet_model_{ts}_dice{val_dice:.3f}_ep{epochs_done:02d}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save model
-    ckpt_path = out_dir / "model.pt"
-    torch.save(model.state_dict(), ckpt_path)
+    torch.save(model.state_dict(), out_dir / "model.pt")
 
-    # Save dice curve
     plt.figure()
-    plt.plot(range(1, len(dice_hist)+1), dice_hist)   # default style/colors
+    plt.plot(range(1, len(dice_hist)+1), dice_hist)
     plt.xlabel("Epoch")
     plt.ylabel("Validation Mean Dice")
     plt.title("Validation Dice over Epochs")
     plt.grid(True)
-    fig_path = out_dir / "dice_curve.png"
-    plt.savefig(fig_path, bbox_inches="tight")
+    plt.savefig(out_dir / "dice_curve.png", bbox_inches="tight")
     plt.close()
 
-    print(f"Saved model to: {ckpt_path}")
-    print(f"Saved dice figure to: {fig_path}")
+    print(f"Saved model: {out_dir/'model.pt'}")
+    print(f"Saved dice figure: {out_dir/'dice_curve.png'}")
 
-# =========================
-# 5) Entry point
-# =========================
 if __name__ == "__main__":
     train_unet(
         epochs=10,
