@@ -1,10 +1,3 @@
-<<<<<<< HEAD
-# unet_oasis_seg_cuda_2080.py — UNet for OASIS with RTX 2080 optimisations
-from pathlib import Path
-from datetime import datetime
-from typing import Tuple, Union, List, Optional
-import os
-=======
 # unet_oasis_seg_win2080.py — UNet for OASIS 2D segmentation (Windows + RTX 2080 tuned)
 # Features:
 # - AMP (FP16) + channels_last + cudnn.benchmark for speed
@@ -18,7 +11,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Union, List, Optional
 import os, platform, argparse, time
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 
 import numpy as np
 from PIL import Image
@@ -36,75 +28,6 @@ try:
 except Exception:
     def tqdm(x, *args, **kwargs): return x
 
-<<<<<<< HEAD
-import matplotlib.pyplot as plt
-plt.switch_backend("Agg")
-
-# =============================
-# GLOBAL CONFIG
-# =============================
-
-# ---- Dataset root (set to None if script sits next to keras_png_slices_data/) ----
-ROOT: Union[str, Path, None] = None
-
-# ---- Training ----
-EPOCHS: int       = 20
-BATCH_SIZE: int   = 12             # Start higher thanks to AMP; tune to your VRAM (RTX 2080 has 8 GB)
-LR: float         = 2e-3
-IMG_SIZE: int     = 256
-USE_RGB: bool     = False
-AUGMENT: bool     = True
-
-# ---- Segmentation ----
-NUM_CLASSES: int = 2               # Set to 4 for bg/CSF/GM/WM, etc.
-IGNORE_INDEX: Optional[int] = None # Example: 255
-
-# ---- RTX 2080 performance knobs ----
-USE_AMP: bool             = True   # Mixed precision (Tensor Cores on Turing)
-AMP_DTYPE                 = torch.float16
-USE_CHANNELS_LAST: bool   = True   # NHWC memory format for conv speed
-USE_COMPILE: bool         = True   # PyTorch 2.x torch.compile for extra speed
-COMPILE_MODE: str         = "reduce-overhead"  # good default; "max-autotune" for longer warmup
-
-# ---- DataLoader performance ----
-_auto_workers = max(2, (os.cpu_count() or 8) - 2)
-NUM_WORKERS: int         = _auto_workers
-PERSISTENT_WORKERS: bool = True
-PREFETCH_FACTOR: int     = 4
-PIN_MEMORY: bool         = True
-
-# ---- Early stop target ----
-EARLY_STOP_DICE: float   = 0.90
-
-# ---- cuDNN knobs ----
-cudnn.benchmark = True            # good for fixed-size inputs
-cudnn.deterministic = False       # faster, non-deterministic OK for training
-torch.backends.cuda.matmul.allow_tf32 = False  # TF32 is Ampere+, not Turing
-
-# -----------------------------
-# Output folders
-# -----------------------------
-RUN_DIR   = Path("outputs") / f"UNet_OASIS_AMP2080_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-FIG_DIR   = RUN_DIR / "figs"
-MODEL_DIR = RUN_DIR / "models"
-for d in (FIG_DIR, MODEL_DIR):
-    d.mkdir(parents=True, exist_ok=True)
-
-# =============================
-# DATASET (images + seg masks)
-# =============================
-def _norm_key(name: str) -> str:
-    # 'seg_441_slice_0.png' or 'case_441_slice_0.png' -> '441_slice_0.png'
-    base = Path(name).name
-    return base.split("_", 1)[1] if "_" in base else base
-
-class SegSlicesDataset(Dataset):
-    """
-    Images: <root>/keras_png_slices_data/keras_png_slices_<split>/*.png
-    Masks : <root>/keras_png_slices_data/keras_png_slices_seg_<split>/*.png
-    Pairs by dropping the first token (seg_ vs case_).
-    Masks can be palette-coded (e.g., 0/85/170/255) — we remap to 0..K-1 safely.
-=======
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -129,39 +52,21 @@ class SegSlicesDataset(Dataset):
     Images: <root>/keras_png_slices_data/keras_png_slices_<split>/*.png  e.g. case_***
     Masks : <root>/keras_png_slices_data/keras_png_slices_seg_<split>/*.png  e.g. seg_***
     Pairs by dropping the first token, robustly remaps palette intensities -> class indices.
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     """
     def __init__(
         self,
         split: str,                          # 'train'|'validate'|'test'
-<<<<<<< HEAD
-        root: Union[str, Path, None] = None,
-        image_size: Tuple[int,int] = (256,256),
-        use_rgb: bool = False,
-        num_classes: int = 2,
-        ignore_index: Optional[int] = None,
-        augment: bool = False,
-=======
         root: Union[str, Path, None],
         image_size: Tuple[int,int],
         use_rgb: bool,
         num_classes: int,
         ignore_index: Optional[int],
         augment: bool,
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     ):
         if split not in {"train","validate","test"}:
             raise ValueError("split must be train|validate|test")
 
-<<<<<<< HEAD
-        try:
-            here = Path(__file__).resolve().parent
-        except NameError:
-            here = Path.cwd()
-
-=======
         here = Path.cwd()
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         outer_root = Path(root) if root is not None else here / "keras_png_slices_data"
         inner_root = outer_root / "keras_png_slices_data"
 
@@ -209,28 +114,14 @@ class SegSlicesDataset(Dataset):
         img = img.convert("RGB") if self.use_rgb else img.convert("L")
         x = self.im_tf(img)  # [C,H,W], in [0,1]
 
-<<<<<<< HEAD
-        # mask: load, resize, to numpy int
-=======
         # mask
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         m = Image.open(mp).convert("L")
         m = self.msk_resize(m)
         m = np.array(m, dtype=np.int64)
 
-<<<<<<< HEAD
-        # ---- remap mask intensities -> class indices [0..num_classes-1] ----
-        vals = np.unique(m)
-        if self.ignore_index is not None:
-            vals_no_ign = vals[vals != self.ignore_index]
-        else:
-            vals_no_ign = vals
-
-=======
         # remap palette to indices
         vals = np.unique(m)
         vals_no_ign = vals[vals != self.ignore_index] if (self.ignore_index is not None) else vals
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         if vals_no_ign.size and vals_no_ign.max() > (self.num_classes - 1):
             sorted_vals = np.sort(vals_no_ign)
             lut = {v: i for i, v in enumerate(sorted_vals)}
@@ -242,10 +133,6 @@ class SegSlicesDataset(Dataset):
                 vmapped = np.vectorize(lut.get)(m)
             m = vmapped
 
-<<<<<<< HEAD
-        # Safety: clip any out-of-range labels
-=======
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         if self.ignore_index is None:
             m = np.clip(m, 0, self.num_classes - 1)
         else:
@@ -264,16 +151,10 @@ class SegSlicesDataset(Dataset):
 
         return x, y, ip.name
 
-<<<<<<< HEAD
-# =============================
-# UNet
-# =============================
-=======
 
 # ----------------------------
 # Model
 # ----------------------------
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
@@ -327,16 +208,10 @@ class UNet(nn.Module):
         y = self.up4(y, x1)
         return self.outc(y)
 
-<<<<<<< HEAD
-# =============================
-# Losses & metrics
-# =============================
-=======
 
 # ----------------------------
 # Losses / Metrics / Viz
 # ----------------------------
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 def soft_dice_per_class(
     logits, target, eps=1e-6, num_classes=None,
     ignore_index: Optional[int]=None, ignore_empty=True
@@ -367,14 +242,7 @@ def soft_dice_per_class(
 
     if ignore_empty:
         present = (gt_sum > 0)
-<<<<<<< HEAD
-        if present.any():
-            return dsc[present]
-        else:
-            return torch.zeros_like(dsc)
-=======
         return dsc[present] if present.any() else torch.zeros_like(dsc)
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     return dsc
 
 def dice_plus_ce(logits, target, class_weights=None, ignore_index: Optional[int]=None):
@@ -390,19 +258,6 @@ def dice_plus_ce(logits, target, class_weights=None, ignore_index: Optional[int]
     return ce + dice_loss, ce.detach(), dice_loss.detach(), dsc_present.detach()
 
 @torch.no_grad()
-<<<<<<< HEAD
-def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=None, amp=USE_AMP):
-    model.eval()
-    dsc_list = []
-    autocast_ctx = torch.autocast(device_type="cuda", dtype=AMP_DTYPE) if (amp and device.type=="cuda") else torch.cpu.amp.autocast(enabled=False)
-    with autocast_ctx:
-        for x, y, _ in loader:
-            # Channels-last + non_blocking copy
-            if device.type == "cuda" and USE_CHANNELS_LAST:
-                x = x.to(device, non_blocking=True, memory_format=torch.channels_last)
-            else:
-                x = x.to(device, non_blocking=True)
-=======
 def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], amp_enabled: bool, amp_dtype):
     model.eval()
     dsc_list = []
@@ -418,7 +273,6 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], am
     with ctx:
         for x, y, _ in loader:
             x = x.to(device, non_blocking=True)
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
             y = y.to(device, non_blocking=True)
             logits = model(x)
             dsc_present = soft_dice_per_class(
@@ -427,10 +281,7 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], am
             )
             if dsc_present.numel() > 0:
                 dsc_list.append(dsc_present.float().cpu().numpy())
-<<<<<<< HEAD
-=======
 
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     if not dsc_list:
         return np.zeros(num_classes, dtype=np.float32)
     maxc = num_classes
@@ -446,22 +297,6 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], am
     per_class = np.nan_to_num(per_class, nan=0.0)
     return per_class
 
-<<<<<<< HEAD
-# =============================
-# Visualisation
-# =============================
-@torch.no_grad()
-def save_overlays(model, loader, device, out_path, num_classes, n=6, amp=USE_AMP):
-    model.eval()
-    x, y, names = next(iter(loader))
-    if device.type == "cuda" and USE_CHANNELS_LAST:
-        x = x[:n].to(device, non_blocking=True, memory_format=torch.channels_last)
-    else:
-        x = x[:n].to(device, non_blocking=True)
-    y = y[:n]
-    autocast_ctx = torch.autocast(device_type="cuda", dtype=AMP_DTYPE) if (amp and device.type=="cuda") else torch.cpu.amp.autocast(enabled=False)
-    with autocast_ctx:
-=======
 @torch.no_grad()
 def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled=True, amp_dtype=torch.float16):
     model.eval()
@@ -479,7 +314,6 @@ def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled
         ctx = _NullCtx()
 
     with ctx:
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         logits = model(x)
     pred = torch.argmax(logits, dim=1).cpu()
 
@@ -515,66 +349,6 @@ def save_dice_bar(per_class, out_path, class_names=None):
     plt.savefig(out_path, dpi=160); plt.close()
     print(f"[saved] {out_path}")
 
-<<<<<<< HEAD
-# =============================
-# Main training loop
-# =============================
-def main():
-    torch.manual_seed(42); np.random.seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Device:", device)
-    imsz = (IMG_SIZE, IMG_SIZE)
-
-    # Datasets
-    train_ds = SegSlicesDataset("train",    root=ROOT, image_size=imsz, use_rgb=USE_RGB,
-                                num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=AUGMENT)
-    try:
-        val_ds = SegSlicesDataset("validate", root=ROOT, image_size=imsz, use_rgb=USE_RGB,
-                                  num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=False)
-    except FileNotFoundError:
-        val_ds = SegSlicesDataset("train",    root=ROOT, image_size=imsz, use_rgb=USE_RGB,
-                                  num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=False)
-    test_ds = SegSlicesDataset("test",     root=ROOT, image_size=imsz, use_rgb=USE_RGB,
-                               num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=False)
-
-    # Loaders
-    train_loader = DataLoader(
-        train_ds, batch_size=BATCH_SIZE, shuffle=True,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
-        persistent_workers=PERSISTENT_WORKERS, prefetch_factor=PREFETCH_FACTOR
-    )
-    val_loader   = DataLoader(
-        val_ds, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
-        persistent_workers=PERSISTENT_WORKERS, prefetch_factor=PREFETCH_FACTOR
-    )
-    test_loader  = DataLoader(
-        test_ds, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
-        persistent_workers=PERSISTENT_WORKERS, prefetch_factor=PREFETCH_FACTOR
-    )
-
-    # Model
-    model = UNet(in_channels=3 if USE_RGB else 1, num_classes=NUM_CLASSES)
-
-    # Channels-last for model params & buffers
-    if USE_CHANNELS_LAST:
-        model = model.to(memory_format=torch.channels_last)
-
-    model = model.to(device)
-
-    # torch.compile (PyTorch 2.x)
-    if USE_COMPILE:
-        try:
-            model = torch.compile(model, mode=COMPILE_MODE)
-            print(f"[compile] model compiled with mode='{COMPILE_MODE}'")
-        except Exception as e:
-            print(f"[compile] skipped ({e})")
-
-    # Optimizer & AMP scaler
-    opt = torch.optim.Adam(model.parameters(), lr=LR)
-    scaler = torch.cuda.amp.GradScaler(enabled=(USE_AMP and device.type=="cuda"))
-=======
 
 # ----------------------------
 # Training
@@ -656,21 +430,10 @@ def main(args):
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     from torch import amp as _amp
     scaler = _amp.GradScaler("cuda", enabled=(args.amp and device.type=="cuda"))
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 
     best_mean = 0.0
     best_tag = "best_unet.pt"
 
-<<<<<<< HEAD
-    for ep in range(1, EPOCHS+1):
-        model.train()
-        tot=ce_s=dl_s=0.0; n=0
-
-        pbar = tqdm(train_loader, desc=f"Epoch {ep:03d}/{EPOCHS} (train)", leave=False)
-        for x,y,_ in pbar:
-            # Move to GPU efficiently
-            if device.type == "cuda" and USE_CHANNELS_LAST:
-=======
     # Throughput meter (images/sec, per epoch)
     def _throughput(num_imgs, t0, t1): 
         dt = max(t1 - t0, 1e-6); return num_imgs / dt
@@ -686,68 +449,11 @@ def main(args):
         for step, (x,y,_) in enumerate(pbar, start=1):
             # Move to GPU
             if device.type == "cuda" and args.channels_last:
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
                 x = x.to(device, non_blocking=True, memory_format=torch.channels_last)
             else:
                 x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-<<<<<<< HEAD
-            # AMP forward/backward
-            with torch.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=(USE_AMP and device.type=="cuda")):
-                logits = model(x)
-                loss, ce, dl, _ = dice_plus_ce(logits, y, ignore_index=IGNORE_INDEX)
-
-            opt.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.step(opt)
-            scaler.update()
-
-            bs = x.size(0); n += bs
-            tot += float(loss)*bs; ce_s += float(ce)*bs; dl_s += float(dl)*bs
-            pbar.set_postfix({"loss": f"{tot/n:.3f}", "ce": f"{ce_s/n:.3f}",
-                              "dice": f"{dl_s/n:.3f}"})
-
-        # Validation (uses AMP + channels-last inside evaluate)
-        per_class = evaluate(model, val_loader, device, NUM_CLASSES, ignore_index=IGNORE_INDEX, amp=USE_AMP)
-        mean_dsc_present = float(np.mean(per_class[per_class>0]) if np.any(per_class>0) else 0.0)
-        print(
-            f"Epoch {ep:03d}/{EPOCHS} | loss={tot/n:.3f} "
-            f"(ce={ce_s/n:.3f} dice={dl_s/n:.3f}) | "
-            f"Val mean DSC(present)={mean_dsc_present:.4f} | " +
-            " ".join([f"c{i}={per_class[i]:.3f}" for i in range(len(per_class))])
-        )
-
-        if ep % 5 == 0 or ep == 1:
-            save_overlays(model, val_loader, device, FIG_DIR / f"val_overlay_e{ep:03d}.png", NUM_CLASSES, n=6, amp=USE_AMP)
-            save_dice_bar(per_class, FIG_DIR / f"dice_val_e{ep:03d}.png")
-
-        if mean_dsc_present > best_mean:
-            best_mean = mean_dsc_present
-            torch.save(model.state_dict(), MODEL_DIR / best_tag)
-
-        if mean_dsc_present >= EARLY_STOP_DICE:
-            print(f"[early-stop] mean Dice (present classes) reached {mean_dsc_present:.4f} ≥ {EARLY_STOP_DICE}")
-            break
-
-    # Final evals & artifacts
-    v_d = evaluate(model, val_loader, device, NUM_CLASSES, ignore_index=IGNORE_INDEX, amp=USE_AMP)
-    t_d = evaluate(model, test_loader, device, NUM_CLASSES, ignore_index=IGNORE_INDEX, amp=USE_AMP)
-    save_dice_bar(v_d, FIG_DIR / "dice_val_final.png")
-    save_dice_bar(t_d, FIG_DIR / "dice_test_final.png")
-    save_overlays(model, val_loader, device, FIG_DIR / "val_overlay_final.png", NUM_CLASSES, n=8, amp=USE_AMP)
-    save_overlays(model, test_loader, device, FIG_DIR / "test_overlay_final.png", NUM_CLASSES, n=8, amp=USE_AMP)
-
-    tag = f"UNet_valDice{best_mean:.3f}_ep{ep:02d}.pt"
-    torch.save(model.state_dict(), MODEL_DIR / tag)
-    print(f"[VAL] per-class={np.round(v_d,4)} (mean over present={v_d[v_d>0].mean() if np.any(v_d>0) else 0.0:.4f})")
-    print(f"[TEST] per-class={np.round(t_d,4)} (mean over present={t_d[t_d>0].mean() if np.any(t_d>0) else 0.0:.4f})")
-    print(f"[saved] model -> {MODEL_DIR}")
-    print(f"[saved] figs  -> {FIG_DIR}")
-
-if __name__ == "__main__":
-    main()
-=======
             # AMP forward
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(args.amp and device.type=="cuda")):
                 logits = model(x)
@@ -833,7 +539,7 @@ def build_argparser():
     p.add_argument("--no-augment", action="store_true")
 
     # training
-    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch", type=int, default=12)
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--early-stop-dice", type=float, default=0.90)
@@ -860,4 +566,3 @@ def build_argparser():
 if __name__ == "__main__":
     args = build_argparser().parse_args()
     main(args)
->>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
