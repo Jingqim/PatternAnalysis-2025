@@ -1,11 +1,4 @@
-# unet_oasis_seg_win2080.py — UNet for OASIS 2D segmentation (Windows + RTX 2080 tuned)
-# Features:
-# - AMP (FP16) + channels_last + cudnn.benchmark for speed
-# - Safe torch.compile(): auto-disabled on Windows / no Triton
-# - Robust mask remap (palette→indices), IGNORE_INDEX support
-# - CLI flags (batch/epochs/workers/etc.)
-# - Optional gradient accumulation
-# - Simple throughput meter (images/sec)
+
 
 from pathlib import Path
 from datetime import datetime
@@ -37,7 +30,11 @@ import matplotlib.pyplot as plt
 # Utilities
 # ----------------------------
 def _has_triton():
-    return False
+    try:
+        import triton  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 def _norm_key(name: str) -> str:
     base = Path(name).name
@@ -59,7 +56,7 @@ class SegSlicesDataset(Dataset):
         root: Union[str, Path, None],
         image_size: Tuple[int,int],
         use_rgb: bool,
-        num_classes: 4,
+        num_classes: int,
         ignore_index: Optional[int],
         augment: bool,
     ):
@@ -89,8 +86,7 @@ class SegSlicesDataset(Dataset):
             raise FileNotFoundError(f"{len(missing)} masks missing in {self.msk_dir}. First few: {missing[:5]}")
 
         self.use_rgb = use_rgb
-        # self.num_classes = num_classes
-        self.num_classes = 4
+        self.num_classes = num_classes
         self.ignore_index = ignore_index
 
         self.im_tf = T.Compose([
@@ -123,6 +119,14 @@ class SegSlicesDataset(Dataset):
         # remap palette to indices
         vals = np.unique(m)
         vals_no_ign = vals[vals != self.ignore_index] if (self.ignore_index is not None) else vals
+
+        # Guardrail: if dataset carries more distinct labels than configured
+        if vals_no_ign.size and (len(np.unique(vals_no_ign)) > self.num_classes):
+            raise ValueError(
+                f"Mask has {len(np.unique(vals_no_ign))} distinct labels but num_classes={self.num_classes}. "
+                f"Increase num_classes or verify mask encoding. Unique vals: {sorted(vals_no_ign.tolist())}"
+            )
+
         if vals_no_ign.size and vals_no_ign.max() > (self.num_classes - 1):
             sorted_vals = np.sort(vals_no_ign)
             lut = {v: i for i, v in enumerate(sorted_vals)}
@@ -299,9 +303,13 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], am
     return per_class
 
 @torch.no_grad()
-def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled=True, amp_dtype=torch.float16):
+def save_overlays(model, loader, device, out_path, num_classes=4, n=6, amp_enabled=True, amp_dtype=torch.float16):
+    """
+    Save side-by-side [input | ground truth | prediction] rows using 4 fixed grayscale classes:
+        c0 = black, c1 = dark gray, c2 = light gray, c3 = white
+    """
     model.eval()
-    x, y, names = next(iter(loader))
+    x, y, _ = next(iter(loader))
     x = x[:n].to(device, non_blocking=True)
     y = y[:n]
 
@@ -318,20 +326,26 @@ def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled
         logits = model(x)
     pred = torch.argmax(logits, dim=1).cpu()
 
+    # fixed 4-class grayscale palette (black → white)
     palette = np.array([
-        [0,0,0],[255,0,0],[0,255,0],[0,0,255],
-        [255,255,0],[255,0,255],[0,255,255]
-    ], dtype=np.uint8)[:num_classes]
+        [0, 0, 0],         # c0: black
+        [85, 85, 85],      # c1: dark gray
+        [170, 170, 170],   # c2: light gray
+        [255, 255, 255],   # c3: white
+    ], dtype=np.uint8)
 
     rows=[]
     for i in range(min(n, x.size(0))):
         img = x[i].float().cpu()
         img3 = img.repeat(3,1,1) if img.shape[0]==1 else img
-        gt_idx = y[i].cpu().numpy()
-        gt_idx = np.clip(gt_idx, 0, num_classes-1)
+
+        gt_idx = np.clip(y[i].cpu().numpy(), 0, 3)
+        pr_idx = np.clip(pred[i].numpy(),   0, 3)
+
         gt_rgb = torch.from_numpy(palette[gt_idx]).permute(2,0,1)/255.0
-        pr_rgb = torch.from_numpy(palette[pred[i].numpy()]).permute(2,0,1)/255.0
+        pr_rgb = torch.from_numpy(palette[pr_idx]).permute(2,0,1)/255.0
         rows.append(torch.cat([img3, gt_rgb, pr_rgb], dim=-1))
+
     grid = torch.cat(rows, dim=-2)
     save_image(grid, out_path)
     print(f"[saved] {out_path}")
@@ -339,7 +353,9 @@ def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled
 def save_dice_bar(per_class, out_path, class_names=None):
     xs = np.arange(len(per_class))
     plt.figure(figsize=(max(5,len(per_class)*1.2),3.5))
-    plt.bar(xs, per_class)
+    # Optional: grayscale bars to match overlay classes
+    colors = ["black", "dimgray", "lightgray", "silver"][:len(per_class)]
+    plt.bar(xs, per_class, color=colors)
     plt.ylim(0,1); plt.ylabel("DSC (present classes avg)")
     if class_names and len(class_names)==len(per_class):
         plt.xticks(xs, class_names, rotation=45)
@@ -378,15 +394,15 @@ def main(args):
     # Datasets
     imsz = (args.img_size, args.img_size)
     train_ds = SegSlicesDataset("train",    root=args.root, image_size=imsz, use_rgb=args.use_rgb,
-                                num_classes=args.num_classes, ignore_index=args.ignore_index, augment=not args.no_augment)
+                                num_classes=4, ignore_index=args.ignore_index, augment=not args.no_augment)
     try:
         val_ds = SegSlicesDataset("validate", root=args.root, image_size=imsz, use_rgb=args.use_rgb,
-                                  num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+                                  num_classes=4, ignore_index=args.ignore_index, augment=False)
     except FileNotFoundError:
         val_ds = SegSlicesDataset("train",    root=args.root, image_size=imsz, use_rgb=args.use_rgb,
-                                  num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+                                  num_classes=4, ignore_index=args.ignore_index, augment=False)
     test_ds = SegSlicesDataset("test",     root=args.root, image_size=imsz, use_rgb=args.use_rgb,
-                               num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+                               num_classes=4, ignore_index=args.ignore_index, augment=False)
 
     # Loaders
     train_loader = DataLoader(
@@ -412,8 +428,8 @@ def main(args):
     fig_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    # Model
-    model = UNet(in_channels=3 if args.use_rgb else 1, num_classes=args.num_classes)
+    # Model (single-channel by default for MRI)
+    model = UNet(in_channels=3 if args.use_rgb else 1, num_classes=4)
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
     model = model.to(device)
@@ -485,7 +501,7 @@ def main(args):
         imgs_per_sec = _throughput(seen_images, t_epoch0, t_epoch1)
 
         # Validation
-        per_class = evaluate(model, val_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
+        per_class = evaluate(model, val_loader, device, 4, args.ignore_index, args.amp, torch.float16)
         mean_dsc_present = float(np.mean(per_class[per_class>0]) if np.any(per_class>0) else 0.0)
         print(
             f"Epoch {ep:03d}/{args.epochs} | loss={tot/n:.3f} "
@@ -497,8 +513,9 @@ def main(args):
 
         if (ep % args.save_every == 0) or (ep == 1):
             save_overlays(model, val_loader, device, fig_dir / f"val_overlay_e{ep:03d}.png",
-                          args.num_classes, n=6, amp_enabled=args.amp, amp_dtype=torch.float16)
-            save_dice_bar(per_class, fig_dir / f"dice_val_e{ep:03d}.png")
+                          4, n=6, amp_enabled=args.amp, amp_dtype=torch.float16)
+            save_dice_bar(per_class, fig_dir / f"dice_val_e{ep:03d}.png",
+                          class_names=["c0","c1","c2","c3"])
 
         if mean_dsc_present > best_mean:
             best_mean = mean_dsc_present
@@ -509,13 +526,13 @@ def main(args):
             break
 
     # Final evals & artifacts
-    v_d = evaluate(model, val_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
-    t_d = evaluate(model, test_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
-    save_dice_bar(v_d, fig_dir / "dice_val_final.png")
-    save_dice_bar(t_d, fig_dir / "dice_test_final.png")
-    save_overlays(model, val_loader, device, fig_dir / "val_overlay_final.png", args.num_classes, n=8,
+    v_d = evaluate(model, val_loader, device, 4, args.ignore_index, args.amp, torch.float16)
+    t_d = evaluate(model, test_loader, device, 4, args.ignore_index, args.amp, torch.float16)
+    save_dice_bar(v_d, fig_dir / "dice_val_final.png",  class_names=["c0","c1","c2","c3"])
+    save_dice_bar(t_d, fig_dir / "dice_test_final.png", class_names=["c0","c1","c2","c3"])
+    save_overlays(model, val_loader,  device, fig_dir / "val_overlay_final.png", 4, n=8,
                   amp_enabled=args.amp, amp_dtype=torch.float16)
-    save_overlays(model, test_loader, device, fig_dir / "test_overlay_final.png", args.num_classes, n=8,
+    save_overlays(model, test_loader, device, fig_dir / "test_overlay_final.png", 4, n=8,
                   amp_enabled=args.amp, amp_dtype=torch.float16)
 
     tag = f"UNet_valDice{best_mean:.3f}_ep{ep:02d}.pt"
@@ -530,17 +547,16 @@ def main(args):
 # CLI
 # ----------------------------
 def build_argparser():
-    p = argparse.ArgumentParser(description="UNet OASIS (Windows + RTX2080 optimised)")
+    p = argparse.ArgumentParser(description="UNet OASIS (Windows + RTX2080, 4 classes)")
     # data
     p.add_argument("--root", type=str, default=None, help="Folder that contains keras_png_slices_data/")
     p.add_argument("--img-size", type=int, default=256)
     p.add_argument("--use-rgb", action="store_true", help="Use RGB inputs (default: grayscale)")
-    p.add_argument("--num-classes", type=int, default=2)
-    p.add_argument("--ignore-index", type=int, default=None)
+    p.add_argument("--ignore-index", type=int, default=None, help="e.g., 255")
     p.add_argument("--no-augment", action="store_true")
 
     # training
-    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--batch", type=int, default=12)
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--early-stop-dice", type=float, default=0.90)
