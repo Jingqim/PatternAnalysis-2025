@@ -1,8 +1,24 @@
+<<<<<<< HEAD
 # unet_oasis_seg_cuda_2080.py — UNet for OASIS with RTX 2080 optimisations
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Union, List, Optional
 import os
+=======
+# unet_oasis_seg_win2080.py — UNet for OASIS 2D segmentation (Windows + RTX 2080 tuned)
+# Features:
+# - AMP (FP16) + channels_last + cudnn.benchmark for speed
+# - Safe torch.compile(): auto-disabled on Windows / no Triton
+# - Robust mask remap (palette→indices), IGNORE_INDEX support
+# - CLI flags (batch/epochs/workers/etc.)
+# - Optional gradient accumulation
+# - Simple throughput meter (images/sec)
+
+from pathlib import Path
+from datetime import datetime
+from typing import Tuple, Union, List, Optional
+import os, platform, argparse, time
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 
 import numpy as np
 from PIL import Image
@@ -20,6 +36,7 @@ try:
 except Exception:
     def tqdm(x, *args, **kwargs): return x
 
+<<<<<<< HEAD
 import matplotlib.pyplot as plt
 plt.switch_backend("Agg")
 
@@ -87,25 +104,64 @@ class SegSlicesDataset(Dataset):
     Masks : <root>/keras_png_slices_data/keras_png_slices_seg_<split>/*.png
     Pairs by dropping the first token (seg_ vs case_).
     Masks can be palette-coded (e.g., 0/85/170/255) — we remap to 0..K-1 safely.
+=======
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+# ----------------------------
+# Utilities
+# ----------------------------
+def _has_triton():
+    return False
+
+def _norm_key(name: str) -> str:
+    base = Path(name).name
+    return base.split("_", 1)[1] if "_" in base else base
+
+
+# ----------------------------
+# Dataset
+# ----------------------------
+class SegSlicesDataset(Dataset):
+    """
+    Images: <root>/keras_png_slices_data/keras_png_slices_<split>/*.png  e.g. case_***
+    Masks : <root>/keras_png_slices_data/keras_png_slices_seg_<split>/*.png  e.g. seg_***
+    Pairs by dropping the first token, robustly remaps palette intensities -> class indices.
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     """
     def __init__(
         self,
         split: str,                          # 'train'|'validate'|'test'
+<<<<<<< HEAD
         root: Union[str, Path, None] = None,
         image_size: Tuple[int,int] = (256,256),
         use_rgb: bool = False,
         num_classes: int = 2,
         ignore_index: Optional[int] = None,
         augment: bool = False,
+=======
+        root: Union[str, Path, None],
+        image_size: Tuple[int,int],
+        use_rgb: bool,
+        num_classes: int,
+        ignore_index: Optional[int],
+        augment: bool,
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     ):
         if split not in {"train","validate","test"}:
             raise ValueError("split must be train|validate|test")
 
+<<<<<<< HEAD
         try:
             here = Path(__file__).resolve().parent
         except NameError:
             here = Path.cwd()
 
+=======
+        here = Path.cwd()
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         outer_root = Path(root) if root is not None else here / "keras_png_slices_data"
         inner_root = outer_root / "keras_png_slices_data"
 
@@ -153,11 +209,16 @@ class SegSlicesDataset(Dataset):
         img = img.convert("RGB") if self.use_rgb else img.convert("L")
         x = self.im_tf(img)  # [C,H,W], in [0,1]
 
+<<<<<<< HEAD
         # mask: load, resize, to numpy int
+=======
+        # mask
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         m = Image.open(mp).convert("L")
         m = self.msk_resize(m)
         m = np.array(m, dtype=np.int64)
 
+<<<<<<< HEAD
         # ---- remap mask intensities -> class indices [0..num_classes-1] ----
         vals = np.unique(m)
         if self.ignore_index is not None:
@@ -165,6 +226,11 @@ class SegSlicesDataset(Dataset):
         else:
             vals_no_ign = vals
 
+=======
+        # remap palette to indices
+        vals = np.unique(m)
+        vals_no_ign = vals[vals != self.ignore_index] if (self.ignore_index is not None) else vals
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         if vals_no_ign.size and vals_no_ign.max() > (self.num_classes - 1):
             sorted_vals = np.sort(vals_no_ign)
             lut = {v: i for i, v in enumerate(sorted_vals)}
@@ -176,7 +242,10 @@ class SegSlicesDataset(Dataset):
                 vmapped = np.vectorize(lut.get)(m)
             m = vmapped
 
+<<<<<<< HEAD
         # Safety: clip any out-of-range labels
+=======
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         if self.ignore_index is None:
             m = np.clip(m, 0, self.num_classes - 1)
         else:
@@ -195,9 +264,16 @@ class SegSlicesDataset(Dataset):
 
         return x, y, ip.name
 
+<<<<<<< HEAD
 # =============================
 # UNet
 # =============================
+=======
+
+# ----------------------------
+# Model
+# ----------------------------
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
@@ -251,9 +327,16 @@ class UNet(nn.Module):
         y = self.up4(y, x1)
         return self.outc(y)
 
+<<<<<<< HEAD
 # =============================
 # Losses & metrics
 # =============================
+=======
+
+# ----------------------------
+# Losses / Metrics / Viz
+# ----------------------------
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 def soft_dice_per_class(
     logits, target, eps=1e-6, num_classes=None,
     ignore_index: Optional[int]=None, ignore_empty=True
@@ -284,10 +367,14 @@ def soft_dice_per_class(
 
     if ignore_empty:
         present = (gt_sum > 0)
+<<<<<<< HEAD
         if present.any():
             return dsc[present]
         else:
             return torch.zeros_like(dsc)
+=======
+        return dsc[present] if present.any() else torch.zeros_like(dsc)
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     return dsc
 
 def dice_plus_ce(logits, target, class_weights=None, ignore_index: Optional[int]=None):
@@ -303,6 +390,7 @@ def dice_plus_ce(logits, target, class_weights=None, ignore_index: Optional[int]
     return ce + dice_loss, ce.detach(), dice_loss.detach(), dsc_present.detach()
 
 @torch.no_grad()
+<<<<<<< HEAD
 def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=None, amp=USE_AMP):
     model.eval()
     dsc_list = []
@@ -314,6 +402,23 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=Non
                 x = x.to(device, non_blocking=True, memory_format=torch.channels_last)
             else:
                 x = x.to(device, non_blocking=True)
+=======
+def evaluate(model, loader, device, num_classes, ignore_index: Optional[int], amp_enabled: bool, amp_dtype):
+    model.eval()
+    dsc_list = []
+    use_amp = (amp_enabled and device.type == "cuda")
+    if use_amp:
+        ctx = torch.autocast(device_type="cuda", dtype=amp_dtype)
+    else:
+        class _NullCtx:
+            def __enter__(self): return None
+            def __exit__(self, *args): return False
+        ctx = _NullCtx()
+
+    with ctx:
+        for x, y, _ in loader:
+            x = x.to(device, non_blocking=True)
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
             y = y.to(device, non_blocking=True)
             logits = model(x)
             dsc_present = soft_dice_per_class(
@@ -322,6 +427,10 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=Non
             )
             if dsc_present.numel() > 0:
                 dsc_list.append(dsc_present.float().cpu().numpy())
+<<<<<<< HEAD
+=======
+
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
     if not dsc_list:
         return np.zeros(num_classes, dtype=np.float32)
     maxc = num_classes
@@ -337,6 +446,7 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=Non
     per_class = np.nan_to_num(per_class, nan=0.0)
     return per_class
 
+<<<<<<< HEAD
 # =============================
 # Visualisation
 # =============================
@@ -351,6 +461,25 @@ def save_overlays(model, loader, device, out_path, num_classes, n=6, amp=USE_AMP
     y = y[:n]
     autocast_ctx = torch.autocast(device_type="cuda", dtype=AMP_DTYPE) if (amp and device.type=="cuda") else torch.cpu.amp.autocast(enabled=False)
     with autocast_ctx:
+=======
+@torch.no_grad()
+def save_overlays(model, loader, device, out_path, num_classes, n=6, amp_enabled=True, amp_dtype=torch.float16):
+    model.eval()
+    x, y, names = next(iter(loader))
+    x = x[:n].to(device, non_blocking=True)
+    y = y[:n]
+
+    use_amp = (amp_enabled and device.type == "cuda")
+    if use_amp:
+        ctx = torch.autocast(device_type="cuda", dtype=amp_dtype)
+    else:
+        class _NullCtx:
+            def __enter__(self): return None
+            def __exit__(self, *args): return False
+        ctx = _NullCtx()
+
+    with ctx:
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
         logits = model(x)
     pred = torch.argmax(logits, dim=1).cpu()
 
@@ -386,6 +515,7 @@ def save_dice_bar(per_class, out_path, class_names=None):
     plt.savefig(out_path, dpi=160); plt.close()
     print(f"[saved] {out_path}")
 
+<<<<<<< HEAD
 # =============================
 # Main training loop
 # =============================
@@ -444,10 +574,94 @@ def main():
     # Optimizer & AMP scaler
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     scaler = torch.cuda.amp.GradScaler(enabled=(USE_AMP and device.type=="cuda"))
+=======
+
+# ----------------------------
+# Training
+# ----------------------------
+def main(args):
+    # --- Perf knobs ---
+    cudnn.benchmark   = True
+    cudnn.deterministic = False
+    torch.backends.cuda.matmul.allow_tf32 = False  # Turing has no TF32
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Device:", device)
+
+    # Decide if torch.compile is available (Windows usually lacks Triton)
+    CAN_COMPILE = (args.use_compile
+                   and device.type == "cuda"
+                   and _has_triton()
+                   and platform.system().lower() != "windows")
+    if args.use_compile and not CAN_COMPILE:
+        reasons = []
+        if device.type != "cuda": reasons.append("no CUDA")
+        if platform.system().lower() == "windows": reasons.append("Windows OS")
+        if not _has_triton(): reasons.append("Triton not installed")
+        print(f"[compile] disabled ({', '.join(reasons)}) — using eager mode")
+
+    # Datasets
+    imsz = (args.img_size, args.img_size)
+    train_ds = SegSlicesDataset("train",    root=args.root, image_size=imsz, use_rgb=args.use_rgb,
+                                num_classes=args.num_classes, ignore_index=args.ignore_index, augment=not args.no_augment)
+    try:
+        val_ds = SegSlicesDataset("validate", root=args.root, image_size=imsz, use_rgb=args.use_rgb,
+                                  num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+    except FileNotFoundError:
+        val_ds = SegSlicesDataset("train",    root=args.root, image_size=imsz, use_rgb=args.use_rgb,
+                                  num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+    test_ds = SegSlicesDataset("test",     root=args.root, image_size=imsz, use_rgb=args.use_rgb,
+                               num_classes=args.num_classes, ignore_index=args.ignore_index, augment=False)
+
+    # Loaders
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch, shuffle=True,
+        num_workers=args.workers, pin_memory=not args.no_pin_memory,
+        persistent_workers=not args.no_persistent, prefetch_factor=args.prefetch
+    )
+    val_loader   = DataLoader(
+        val_ds, batch_size=args.batch, shuffle=False,
+        num_workers=args.workers, pin_memory=not args.no_pin_memory,
+        persistent_workers=not args.no_persistent, prefetch_factor=args.prefetch
+    )
+    test_loader  = DataLoader(
+        test_ds, batch_size=args.batch, shuffle=False,
+        num_workers=args.workers, pin_memory=not args.no_pin_memory,
+        persistent_workers=not args.no_persistent, prefetch_factor=args.prefetch
+    )
+
+    # Outputs
+    run_dir   = Path(args.out_dir) / f"UNet_OASIS_win2080_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    fig_dir   = run_dir / "figs"
+    model_dir = run_dir / "models"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    # Model
+    model = UNet(in_channels=3 if args.use_rgb else 1, num_classes=args.num_classes)
+    if args.channels_last:
+        model = model.to(memory_format=torch.channels_last)
+    model = model.to(device)
+
+    # torch.compile
+    if CAN_COMPILE:
+        try:
+            model = torch.compile(model, mode=args.compile_mode)
+            print(f"[compile] model compiled with mode='{args.compile_mode}'")
+        except Exception as e:
+            print(f"[compile] skipped at runtime, falling back (reason: {e})")
+            CAN_COMPILE = False
+
+    # Optimizer + AMP scaler
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    from torch import amp as _amp
+    scaler = _amp.GradScaler("cuda", enabled=(args.amp and device.type=="cuda"))
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
 
     best_mean = 0.0
     best_tag = "best_unet.pt"
 
+<<<<<<< HEAD
     for ep in range(1, EPOCHS+1):
         model.train()
         tot=ce_s=dl_s=0.0; n=0
@@ -456,11 +670,29 @@ def main():
         for x,y,_ in pbar:
             # Move to GPU efficiently
             if device.type == "cuda" and USE_CHANNELS_LAST:
+=======
+    # Throughput meter (images/sec, per epoch)
+    def _throughput(num_imgs, t0, t1): 
+        dt = max(t1 - t0, 1e-6); return num_imgs / dt
+
+    for ep in range(1, args.epochs+1):
+        model.train()
+        tot=ce_s=dl_s=0.0; n=0
+        seen_images = 0
+        t_epoch0 = time.perf_counter()
+
+        pbar = tqdm(train_loader, desc=f"Epoch {ep:03d}/{args.epochs} (train)", leave=False)
+        opt.zero_grad(set_to_none=True)
+        for step, (x,y,_) in enumerate(pbar, start=1):
+            # Move to GPU
+            if device.type == "cuda" and args.channels_last:
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
                 x = x.to(device, non_blocking=True, memory_format=torch.channels_last)
             else:
                 x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
+<<<<<<< HEAD
             # AMP forward/backward
             with torch.autocast(device_type="cuda", dtype=AMP_DTYPE, enabled=(USE_AMP and device.type=="cuda")):
                 logits = model(x)
@@ -515,3 +747,117 @@ def main():
 
 if __name__ == "__main__":
     main()
+=======
+            # AMP forward
+            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(args.amp and device.type=="cuda")):
+                logits = model(x)
+                loss, ce, dl, _ = dice_plus_ce(logits, y, ignore_index=args.ignore_index)
+                if args.accum_steps > 1:
+                    loss = loss / args.accum_steps
+
+            scaler.scale(loss).backward()
+
+            # Step on accumulation boundary
+            if step % args.accum_steps == 0:
+                scaler.step(opt)
+                scaler.update()
+                opt.zero_grad(set_to_none=True)
+
+            bs = x.size(0); n += bs; seen_images += bs
+            tot += float(loss)*bs if args.accum_steps == 1 else float(loss)*bs*args.accum_steps
+            ce_s += float(ce)*bs; dl_s += float(dl)*bs
+            pbar.set_postfix({"loss": f"{tot/n:.3f}", "ce": f"{ce_s/n:.3f}", "dice": f"{dl_s/n:.3f}"})
+
+        # If steps didn't align with accum, do a final optimizer step
+        if (len(train_loader) % args.accum_steps) != 0:
+            scaler.step(opt)
+            scaler.update()
+            opt.zero_grad(set_to_none=True)
+
+        t_epoch1 = time.perf_counter()
+        imgs_per_sec = _throughput(seen_images, t_epoch0, t_epoch1)
+
+        # Validation
+        per_class = evaluate(model, val_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
+        mean_dsc_present = float(np.mean(per_class[per_class>0]) if np.any(per_class>0) else 0.0)
+        print(
+            f"Epoch {ep:03d}/{args.epochs} | loss={tot/n:.3f} "
+            f"(ce={ce_s/n:.3f} dice={dl_s/n:.3f}) | "
+            f"Val mean DSC(present)={mean_dsc_present:.4f} | "
+            f"imgs/s={imgs_per_sec:.1f} | " +
+            " ".join([f"c{i}={per_class[i]:.3f}" for i in range(len(per_class))])
+        )
+
+        if (ep % args.save_every == 0) or (ep == 1):
+            save_overlays(model, val_loader, device, fig_dir / f"val_overlay_e{ep:03d}.png",
+                          args.num_classes, n=6, amp_enabled=args.amp, amp_dtype=torch.float16)
+            save_dice_bar(per_class, fig_dir / f"dice_val_e{ep:03d}.png")
+
+        if mean_dsc_present > best_mean:
+            best_mean = mean_dsc_present
+            torch.save(model.state_dict(), model_dir / best_tag)
+
+        if mean_dsc_present >= args.early_stop_dice:
+            print(f"[early-stop] mean Dice (present classes) reached {mean_dsc_present:.4f} ≥ {args.early_stop_dice}")
+            break
+
+    # Final evals & artifacts
+    v_d = evaluate(model, val_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
+    t_d = evaluate(model, test_loader, device, args.num_classes, args.ignore_index, args.amp, torch.float16)
+    save_dice_bar(v_d, fig_dir / "dice_val_final.png")
+    save_dice_bar(t_d, fig_dir / "dice_test_final.png")
+    save_overlays(model, val_loader, device, fig_dir / "val_overlay_final.png", args.num_classes, n=8,
+                  amp_enabled=args.amp, amp_dtype=torch.float16)
+    save_overlays(model, test_loader, device, fig_dir / "test_overlay_final.png", args.num_classes, n=8,
+                  amp_enabled=args.amp, amp_dtype=torch.float16)
+
+    tag = f"UNet_valDice{best_mean:.3f}_ep{ep:02d}.pt"
+    torch.save(model.state_dict(), model_dir / tag)
+    print(f"[VAL]  per-class={np.round(v_d,4)} (mean over present={v_d[v_d>0].mean() if np.any(v_d>0) else 0.0:.4f})")
+    print(f"[TEST] per-class={np.round(t_d,4)} (mean over present={t_d[t_d>0].mean() if np.any(t_d>0) else 0.0:.4f})")
+    print(f"[saved] model -> {model_dir}")
+    print(f"[saved] figs  -> {fig_dir}")
+
+
+# ----------------------------
+# CLI
+# ----------------------------
+def build_argparser():
+    p = argparse.ArgumentParser(description="UNet OASIS (Windows + RTX2080 optimised)")
+    # data
+    p.add_argument("--root", type=str, default=None, help="Folder that contains keras_png_slices_data/")
+    p.add_argument("--img-size", type=int, default=256)
+    p.add_argument("--use-rgb", action="store_true", help="Use RGB inputs (default: grayscale)")
+    p.add_argument("--num-classes", type=int, default=2)
+    p.add_argument("--ignore-index", type=int, default=None)
+    p.add_argument("--no-augment", action="store_true")
+
+    # training
+    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--batch", type=int, default=12)
+    p.add_argument("--lr", type=float, default=2e-3)
+    p.add_argument("--early-stop-dice", type=float, default=0.90)
+    p.add_argument("--accum-steps", type=int, default=1, help="Gradient accumulation steps")
+
+    # perf toggles
+    p.add_argument("--no-amp", dest="amp", action="store_false", help="Disable AMP mixed precision")
+    p.add_argument("--channels-last", dest="channels_last", action="store_true", help="Use NHWC memory format")
+    p.add_argument("--no-pin-memory", action="store_true")
+    p.add_argument("--no-persistent", action="store_true")
+    p.add_argument("--prefetch", type=int, default=4)
+    p.add_argument("--workers", type=int, default=max(2, (os.cpu_count() or 8) - 2))
+
+    # compile
+    p.add_argument("--use-compile", action="store_true", help="Try torch.compile if Triton/Linux available")
+    p.add_argument("--compile-mode", type=str, default="reduce-overhead")
+
+    # io
+    p.add_argument("--out-dir", type=str, default="outputs")
+    p.add_argument("--save-every", type=int, default=5)
+    return p
+
+
+if __name__ == "__main__":
+    args = build_argparser().parse_args()
+    main(args)
+>>>>>>> 47cf426028201643b3d14a643deeb733d29a3fd3
