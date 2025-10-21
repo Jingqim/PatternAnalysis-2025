@@ -1,8 +1,7 @@
-# train_unet.py
-# Train UNet for 10 epochs using ONLY the first 100 training samples.
-# Keeps full validation set. Uses tqdm, early-stops at Dice ≥ 0.90,
-# saves model+plot into oasis_unet_model_YYYYmmdd_HHMMSS_diceX.XXX_epNN/.
+# train.py — UNet trainer with tqdm, cuDNN autotune, early-stop at Dice ≥ 0.90
+# Uses ALL training data by default; set train_limit to cap samples if desired.
 
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -16,7 +15,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from dataset import create_dataloaders_here   # your dataloader factory
+from dataset2 import create_dataloaders_here
+
+# ---- cuDNN autotune for faster convs on fixed sizes ----
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = False
 
 # -------------------
 # Simple U-Net
@@ -85,7 +88,8 @@ def eval_mean_dice(model: nn.Module, loader: DataLoader, n_classes: int, device:
     model.eval()
     dices = []
     for x, y in tqdm(loader, desc="Validating", leave=False):
-        x, y = x.to(device), y.to(device)
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
         p = F.softmax(model(x), dim=1)
         oh = F.one_hot(y, n_classes).permute(0,3,1,2).float()
         dims = (0,2,3)
@@ -99,7 +103,7 @@ def eval_mean_dice(model: nn.Module, loader: DataLoader, n_classes: int, device:
     return float(per_class.mean())
 
 # -------------------
-# Trainer (limit train set to first N)
+# Trainer
 # -------------------
 def train_unet(
     epochs: int = 10,
@@ -108,30 +112,43 @@ def train_unet(
     base_channels: int = 32,
     target_dice: float = 0.90,
     size_hw=(256,256),
-    train_limit: int = 100,   # <-- only use first 100 training samples
+    train_limit=None,          # None => use ALL training samples
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Get full loaders, then subselect training dataset
+    # Build loaders from dataset.py
     full_train_ld, val_ld, _ = create_dataloaders_here(
         batch_size=batch_size, size_hw=size_hw, augment_train=True
     )
-
-    # Rebuild a DataLoader using only the first `train_limit` samples
     full_train_ds = full_train_ld.dataset
-    limit = min(train_limit, len(full_train_ds))
-    train_ds = Subset(full_train_ds, range(limit))
-    train_ld = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=full_train_ld.num_workers, pin_memory=full_train_ld.pin_memory
-    )
+    total = len(full_train_ds)
 
-    # Infer number of classes from a small batch
+    # Coerce/guard train_limit
+    if train_limit is not None:
+        try:
+            train_limit = int(train_limit)
+        except (TypeError, ValueError):
+            train_limit = None
+
+    if train_limit is None or train_limit <= 0 or train_limit >= total:
+        train_ld = full_train_ld
+        print(f"Training on ALL {total} samples | Val: {len(val_ld.dataset)}")
+    else:
+        idx = range(train_limit)
+        train_ds = Subset(full_train_ds, idx)
+        # Use robust loader settings for throughput
+        nworkers = max(2, (os.cpu_count() or 4) // 2)
+        train_ld = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True,
+            num_workers=nworkers, pin_memory=True,
+            persistent_workers=True, prefetch_factor=2
+        )
+        print(f"Training on {train_limit} / {total} samples | Val: {len(val_ld.dataset)}")
+
+    # Infer n_classes from a small batch
     xb, yb = next(iter(train_ld))
     n_classes = int(yb.max().item()) + 1
-
-    print(f"Training with first {limit} samples (of {len(full_train_ds)}) | "
-          f"Val samples: {len(val_ld.dataset)} | Classes: {n_classes}")
+    print(f"Detected n_classes={n_classes} | Device={device}")
 
     model = UNet2D(in_ch=1, n_classes=n_classes, base=base_channels).to(device)
     loss_fn = DiceCE(n_classes)
@@ -143,22 +160,24 @@ def train_unet(
     for ep in range(1, epochs+1):
         model.train()
         running = 0.0
-
         pbar = tqdm(train_ld, desc=f"Epoch {ep}/{epochs}", unit="batch")
         for xb, yb in pbar:
-            xb, yb = xb.to(device), yb.to(device)
+            xb = xb.to(device, non_blocking=True)
+            yb = yb.to(device, non_blocking=True)
+
             opt.zero_grad(set_to_none=True)
             logits = model(xb)
             loss = loss_fn(logits, yb)
             loss.backward()
             opt.step()
+
             running += loss.item()
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         avg_loss = running / max(1, len(train_ld))
         val_dice = eval_mean_dice(model, val_ld, n_classes, device)
         dice_hist.append(val_dice)
-        tqdm.write(f"Epoch {ep:02d}: train loss {avg_loss:.4f} | val mean Dice {val_dice:.4f}")
+        tqdm.write(f"Epoch {ep:02d}: train loss {avg_loss:.4f} | val Dice {val_dice:.4f}")
 
         if val_dice >= target_dice:
             tqdm.write(f"Early stop: Dice {val_dice:.4f} ≥ {target_dice}")
@@ -180,10 +199,8 @@ def _save_artifacts(model: nn.Module, dice_hist, val_dice: float, epochs_done: i
 
     plt.figure()
     plt.plot(range(1, len(dice_hist)+1), dice_hist)
-    plt.xlabel("Epoch")
-    plt.ylabel("Validation Mean Dice")
-    plt.title("Validation Dice over Epochs")
-    plt.grid(True)
+    plt.xlabel("Epoch"); plt.ylabel("Validation Mean Dice")
+    plt.title("Validation Dice over Epochs"); plt.grid(True)
     plt.savefig(out_dir / "dice_curve.png", bbox_inches="tight")
     plt.close()
 
@@ -192,11 +209,12 @@ def _save_artifacts(model: nn.Module, dice_hist, val_dice: float, epochs_done: i
 
 if __name__ == "__main__":
     train_unet(
-        epochs=10,            # exactly 10 epochs
+        epochs=10,
         batch_size=8,
         lr=1e-3,
         base_channels=32,
         target_dice=0.90,
         size_hw=(256,256),
-        train_limit=100,      # <-- limit training set
+        train_limit=None,   # set e.g. 100 or 10000 to limit; None uses ALL data
     )
+
