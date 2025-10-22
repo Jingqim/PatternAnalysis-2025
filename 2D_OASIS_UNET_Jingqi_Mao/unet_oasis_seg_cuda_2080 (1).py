@@ -59,7 +59,7 @@ class SegSlicesDataset(Dataset):
         root: Union[str, Path, None],
         image_size: Tuple[int,int],
         use_rgb: bool,
-        num_classes: int,
+        num_classes: 4,
         ignore_index: Optional[int],
         augment: bool,
     ):
@@ -89,7 +89,8 @@ class SegSlicesDataset(Dataset):
             raise FileNotFoundError(f"{len(missing)} masks missing in {self.msk_dir}. First few: {missing[:5]}")
 
         self.use_rgb = use_rgb
-        self.num_classes = num_classes
+        # self.num_classes = num_classes
+        self.num_classes = 4
         self.ignore_index = ignore_index
 
         self.im_tf = T.Compose([
@@ -184,7 +185,7 @@ class Up(nn.Module):
         return self.conv(x)
 
 class UNet(nn.Module):
-    def __init__(self, in_channels=1, num_classes=2):
+    def __init__(self, in_channels=1, num_classes=4):
         super().__init__()
         self.inc   = DoubleConv(in_channels, 64)
         self.down1 = Down(64, 128)

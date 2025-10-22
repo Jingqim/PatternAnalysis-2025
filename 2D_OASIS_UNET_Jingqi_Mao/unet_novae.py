@@ -29,19 +29,19 @@ plt.switch_backend("Agg")
 # GLOBAL CONFIG
 # =============================
 ROOT: Union[str, Path, None] = None   # None -> ./keras_png_slices_data/keras_png_slices_data
-EPOCHS: int       = 20
-BATCH_SIZE: int   = 8
+EPOCHS: int       = 10
+BATCH_SIZE: int   = 12
 LR: float         = 2e-3
 IMG_SIZE: int     = 256
 USE_RGB: bool     = False
 AUGMENT: bool     = True
 
 # DataLoader
-NUM_WORKERS: int         = 4
+NUM_WORKERS: int         = 6
 PERSISTENT_WORKERS: bool = False
 
 # Segmentation classes (set correctly for your masks, INCLUDING background)
-NUM_CLASSES: int = 2     # 2 for bg/fg; increase if masks have multiple classes
+NUM_CLASSES: int = 4     # 2 for bg/fg; increase if masks have multiple classes
 IGNORE_INDEX: Optional[int] = None     # use 255 if your masks have ignore pixels
 
 # Early stop if mean (present-classes) Dice hits threshold (Task 1 target is 0.90)
@@ -77,7 +77,7 @@ class SegSlicesDataset(Dataset):
         root: Union[str, Path, None] = None,
         image_size: Tuple[int,int] = (256,256),
         use_rgb: bool = False,
-        num_classes: int = 2,
+        num_classes: int = 4,
         ignore_index: Optional[int] = None,
         augment: bool = False,
     ):
@@ -111,7 +111,7 @@ class SegSlicesDataset(Dataset):
             raise FileNotFoundError(f"{len(missing)} masks missing in {self.msk_dir}. First few: {missing[:5]}")
 
         self.use_rgb = use_rgb
-        self.num_classes = num_classes
+        self.num_classes = 4
         self.ignore_index = ignore_index
 
         self.im_tf = T.Compose([
@@ -192,7 +192,7 @@ class Up(nn.Module):
         return self.conv(x)
 
 class UNet(nn.Module):
-    def __init__(self, in_channels=1, num_classes=2):
+    def __init__(self, in_channels=1, num_classes=4):
         super().__init__()
         self.inc   = DoubleConv(in_channels, 64)
         self.down1 = Down(64, 128)
@@ -221,7 +221,7 @@ class UNet(nn.Module):
 # Losses & metrics
 # =============================
 def soft_dice_per_class(
-    logits, target, eps=1e-6, num_classes=None,
+    logits, target, eps=1e-6, num_classes=4,
     ignore_index: Optional[int]=None, ignore_empty=True
 ):
     if num_classes is None:
@@ -301,7 +301,7 @@ def evaluate(model, loader, device, num_classes, ignore_index: Optional[int]=Non
 # Viz
 # =============================
 @torch.no_grad()
-def save_overlays(model, loader, device, out_path, num_classes, n=6):
+def save_overlays(model, loader, device, out_path, num_classes, n=4):
     model.eval()
     x, y, names = next(iter(loader))
     x = x[:n].to(device, non_blocking=True); y = y[:n]
@@ -358,7 +358,10 @@ def main():
     except FileNotFoundError:
         val_ds = SegSlicesDataset("train",    root=ROOT, image_size=imsz, use_rgb=USE_RGB,
                                   num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=False)
-    test_ds = SegSlicesDataset("test",     root=ROOT, image_size=imsz, use_rgb=USE_RGB,
+        print("no validate found")
+        raise FileNotFoundError(f"No PNG images in validate")
+
+    test_ds = SegSlicesDataset("validate",     root=ROOT, image_size=imsz, use_rgb=USE_RGB,
                                num_classes=NUM_CLASSES, ignore_index=IGNORE_INDEX, augment=False)
 
     # Loaders
@@ -394,7 +397,7 @@ def main():
                               "dice": f"{dl_s/n:.3f}"})
 
         per_class = evaluate(model, val_loader, device, NUM_CLASSES, ignore_index=IGNORE_INDEX)
-        mean_dsc_present = float(np.mean(per_class[per_class>0]) if np.any(per_class>0) else 0.0)
+        mean_dsc_present = float(np.mean(per_class[per_class>0.1]) if np.any(per_class<0.1) else 0.0)
         print(
             f"Epoch {ep:03d}/{EPOCHS} | loss={tot/n:.3f} "
             f"(ce={ce_s/n:.3f} dice={dl_s/n:.3f}) | "
