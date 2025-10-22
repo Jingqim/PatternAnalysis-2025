@@ -1,4 +1,4 @@
-#%% DATA LOADING & PREPROCESSING (uses sklearn only here)
+#%% DATA LOADING & PREPROCESSING (sklearn only here)
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -18,7 +18,6 @@ CSV_PATH = Path("./train-metadata.csv")   # columns: isic_id, patient_id, target
 IMG_DIR  = Path("./train-image/image")          # files named: <isic_id>.jpg
 IMG_SIZE = 224
 NUM_WORKERS = 4
-BATCH_SIZE  = 64
 SEED = 42
 TEST_SIZE = 0.20
 VAL_SIZE  = 0.10
@@ -70,7 +69,7 @@ print("[split] Class counts (val):  ", val_df["target"].value_counts().to_dict()
 print("[split] Class counts (test): ", test_df["target"].value_counts().to_dict())
 
 # -------------------------
-# Minimal dataset (no external libs)
+# Minimal dataset (no extra deps)
 # -------------------------
 class ISIC2020Dataset(Dataset):
     """
@@ -95,39 +94,79 @@ class ISIC2020Dataset(Dataset):
                                 mode="bilinear", align_corners=False).squeeze(0)
         return img, torch.tensor(y, dtype=torch.float32)
 
-# (optional) build normal loaders for your classifier workflow
-train_loader_cls = DataLoader(ISIC2020Dataset(train_df), batch_size=BATCH_SIZE, shuffle=True,
-                              num_workers=NUM_WORKERS, pin_memory=True)
-val_loader_cls   = DataLoader(ISIC2020Dataset(val_df),   batch_size=BATCH_SIZE, shuffle=False,
-                              num_workers=NUM_WORKERS, pin_memory=True)
-test_loader_cls  = DataLoader(ISIC2020Dataset(test_df),  batch_size=BATCH_SIZE, shuffle=False,
-                              num_workers=NUM_WORKERS, pin_memory=True)
 
-
-#%% TRAINING — SIAMESE (ONE-SHOT) ON FIRST 50 IMAGES (PyTorch only; tqdm for progress)
+#%% TRAINING — SIAMESE (ONE-SHOT) ON TRAIN-50, VALIDATE ON VAL-50, TEST ON TEST-50
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from tqdm.auto import tqdm
+import numpy as np
 
 DEVICE    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EPOCHS    = 5
+EPOCHS    = 10
 BATCH_S   = 64
 LR        = 1e-3
 EMB_DIM   = 128
 
 # -------------------------
-# Build a 50-image subset and pair dataset
+# Build 50-image subsets (deterministic: first 50 of each split)
 # -------------------------
-subset_df = df.iloc[:50].reset_index(drop=True)
-base50_ds = ISIC2020Dataset(subset_df)
+# train50_df = train_df.iloc[:50].reset_index(drop=True)
+# val50_df   = val_df.iloc[:50].reset_index(drop=True)
+# test50_df  = test_df.iloc[:50].reset_index(drop=True)
+def pick_50_with_k_pos(split_df, k_pos=10, seed=42):
+    rng = np.random.default_rng(seed)
+    pos = split_df[split_df.target==1]
+    neg = split_df[split_df.target==0]
+    k_pos = min(k_pos, len(pos))
+    k_neg = max(0, 200 - k_pos)
+    pos_sample = pos.sample(n=k_pos, random_state=seed) if k_pos>0 else pos.iloc[:0]
+    neg_sample = neg.sample(n=min(k_neg, len(neg)), random_state=seed)
+    out = pd.concat([pos_sample, neg_sample]).sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    return out
 
+train50_df = pick_50_with_k_pos(train_df, k_pos=10, seed=42)
+val50_df   = pick_50_with_k_pos(val_df,   k_pos=10, seed=43)
+test50_df  = pick_50_with_k_pos(test_df,  k_pos=10, seed=44)
+print("pick_50_with_k_pos: Subset sizes: train50 =", len(train50_df),
+      ", val50 =", len(val50_df), ", test50 =", len(test50_df))
+
+print("overlap isic_id train50∩test50:",
+      set(train50_df.isic_id).intersection(set(test50_df.isic_id)))
+print("overlap patient_id train50∩test50:",
+      set(train50_df.patient_id).intersection(set(test50_df.patient_id)))
+
+print("Subset class counts (train50):", train50_df["target"].value_counts().to_dict())
+print("Subset class counts (val50):  ", val50_df["target"].value_counts().to_dict())
+print("Subset class counts (test50): ", test50_df["target"].value_counts().to_dict())
+
+train50_ds = ISIC2020Dataset(train50_df)
+val50_ds   = ISIC2020Dataset(val50_df)
+test50_ds  = ISIC2020Dataset(test50_df)
+
+def pair_stats(df50):
+    y = df50["target"].to_numpy()
+    n0 = int((y==0).sum()); n1 = int((y==1).sum())
+    same = n0*(n0-1)//2 + n1*(n1-1)//2
+    diff = n0*n1
+    return {"negatives": n0, "positives": n1, "same_pairs": same, "diff_pairs": diff}
+
+print("train50:", pair_stats(train50_df))
+print("val50:  ", pair_stats(val50_df))
+print("test50: ", pair_stats(test50_df))
+
+
+#%%
+
+# -------------------------
+# Pair datasets
+# -------------------------
 class PairDataset(Dataset):
     """
     Produces pairs (x1, x2, same_label):
       same_label = 1.0 if labels match else 0.0
-    Also tracks whether the pair includes any positive example to drive sampling weights.
+    Also tracks whether the pair includes any positive example (for sampling weights).
     """
     def __init__(self, base_ds: ISIC2020Dataset):
         self.base = base_ds
@@ -156,15 +195,21 @@ class PairDataset(Dataset):
         x2, _ = self.base[j]
         return x1, x2, self.same[idx]
 
-pair_ds = PairDataset(base50_ds)
+train_pair_ds = PairDataset(train50_ds)
+val_pair_ds   = PairDataset(val50_ds)
+test_pair_ds  = PairDataset(test50_ds)
 
-# Weighted sampler: upweight pairs that include at least one positive sample
-w = np.ones(len(pair_ds), dtype=np.float32)
-w[pair_ds.contains_pos.numpy() == 1.0] *= 8.0
-sampler = WeightedRandomSampler(weights=w, num_samples=len(w), replacement=True)
+# Weighted sampler for TRAIN pairs: upweight any pair that includes a positive
+w = np.ones(len(train_pair_ds), dtype=np.float32)
+w[train_pair_ds.contains_pos.numpy() == 1.0] *= 8.0
+train_sampler = WeightedRandomSampler(weights=w, num_samples=len(w), replacement=True)
 
-pair_loader = DataLoader(pair_ds, batch_size=BATCH_S, sampler=sampler,
-                         num_workers=0, pin_memory=True)
+train_pair_loader = DataLoader(train_pair_ds, batch_size=BATCH_S, sampler=train_sampler,
+                               num_workers=0, pin_memory=True)
+val_pair_loader   = DataLoader(val_pair_ds,   batch_size=BATCH_S, shuffle=False,
+                               num_workers=0, pin_memory=True)
+test_pair_loader  = DataLoader(test_pair_ds,  batch_size=BATCH_S, shuffle=False,
+                               num_workers=0, pin_memory=True)
 
 # -------------------------
 # Simple Siamese model
@@ -198,16 +243,39 @@ class SiameseNet(nn.Module):
         prob_same = self.head(diff).squeeze(1)  # [B]
         return prob_same
 
+# -------------------------
+# Train & eval helpers
+# -------------------------
+def eval_on_pairs(model, loader, device):
+    model.eval()
+    total_loss = 0.0
+    total_acc  = 0.0
+    n_batches  = 0
+    bce = nn.BCELoss()
+    with torch.no_grad():
+        for x1, x2, y in loader:
+            x1 = x1.to(device, non_blocking=True)
+            x2 = x2.to(device, non_blocking=True)
+            y  = y.to(device)
+            probs = model(x1, x2)
+            loss = bce(probs, y)
+            preds = (probs >= 0.5).float()
+            acc = (preds == y).float().mean().item()
+            total_loss += loss.item()
+            total_acc  += acc
+            n_batches  += 1
+    return total_loss / max(1, n_batches), total_acc / max(1, n_batches)
+
+# -------------------------
+# Train loop with tqdm + val every epoch, final test
+# -------------------------
 model = SiameseNet(EMB_DIM).to(DEVICE)
 criterion = nn.BCELoss()
 optim = torch.optim.Adam(model.parameters(), lr=LR)
 
-# -------------------------
-# Train loop with tqdm
-# -------------------------
 for epoch in range(1, EPOCHS + 1):
     model.train()
-    pbar = tqdm(pair_loader, desc=f"Epoch {epoch}/{EPOCHS}", leave=False)
+    pbar = tqdm(train_pair_loader, desc=f"Epoch {epoch}/{EPOCHS}", leave=False)
     running_loss = 0.0
     running_acc  = 0.0
     n_batches = 0
@@ -233,7 +301,12 @@ for epoch in range(1, EPOCHS + 1):
         pbar.set_postfix(loss=f"{running_loss/n_batches:.4f}",
                          acc=f"{running_acc/n_batches:.3f}")
 
-    print(f"[epoch {epoch}] loss={running_loss/n_batches:.4f}  acc={running_acc/n_batches:.3f}")
+    # validation after each epoch
+    val_loss, val_acc = eval_on_pairs(model, val_pair_loader, DEVICE)
+    print(f"[epoch {epoch}] train_loss={running_loss/n_batches:.4f} "
+          f"train_acc={running_acc/n_batches:.3f} | "
+          f"val_loss={val_loss:.4f} val_acc={val_acc:.3f}")
 
-# (Optional) After training, do one-shot inference by encoding a single support example per class
-# and comparing a query image embedding to supports via |z_q - z_support|.
+# final test
+test_loss, test_acc = eval_on_pairs(model, test_pair_loader, DEVICE)
+print(f"[test] loss={test_loss:.4f} acc={test_acc:.3f}")
