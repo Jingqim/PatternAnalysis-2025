@@ -31,6 +31,38 @@ if has_torch_amp() and hasattr(torch.amp, "GradScaler"):
 else:
     GradScaler = torch.cuda.amp.GradScaler
 
+# --------------------- Device selection & logging ---------------------
+def choose_device(device_pref: str = "cuda"):
+    if device_pref == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        print("[warning] --device cuda requested but CUDA not available; using CPU.")
+        return torch.device("cpu")
+    if device_pref == "cpu":
+        return torch.device("cpu")
+    if device_pref == "mps":
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        print("[warning] --device mps requested but MPS not available; using CPU.")
+        return torch.device("cpu")
+    # auto
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+def log_runtime(device):
+    print(f"Device: {device}")
+    print(f"PyTorch: {torch.__version__}")
+    if device.type == "cuda":
+        try:
+            cc = torch.cuda.get_device_capability(0)
+            name = torch.cuda.get_device_name(0)
+            print(f"CUDA (compiled for): {torch.version.cuda} | GPU: {name} | CC: {cc}")
+        except Exception:
+            pass
+
 # --------------------- Data utils ---------------------
 def find_image_dir(root: Path) -> Tuple[Optional[Path], int]:
     exts = {".png",".jpg",".jpeg",".PNG",".JPG",".JPEG"}
@@ -299,8 +331,8 @@ def train(args):
     random.seed(args.seed); np.random.seed(args.seed)
     torch.manual_seed(args.seed); torch.cuda.manual_seed_all(args.seed)
     torch.backends.cudnn.benchmark = True
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Device:", device)
+    device = choose_device(args.device)
+    log_runtime(device)
 
     # I/O
     run_dir = Path(args.out_dir) / datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -426,7 +458,7 @@ def parse_args():
     p.add_argument("--data-root", type=str, default="",
                    help="Folder of mirror (optional). If empty, downloads via kagglehub.")
     p.add_argument("--out-dir", type=str, default="./runs", help="Where to save logs/ckpts.")
-    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--epochs", type=int, default=35)  # <-- changed to 35
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight-decay", type=float, default=1e-4)
@@ -447,6 +479,9 @@ def parse_args():
                    help="Validation share of the whole dataset.")
     p.add_argument("--test-size", type=float, default=0.15,
                    help="Test share of the whole dataset.")
+    p.add_argument("--device", type=str, default="cuda",
+                   choices=["auto","cuda","mps"],
+                   help="Force device. 'auto' picks CUDA if available, else MPS, else CPU.")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
