@@ -458,8 +458,8 @@ def parse_args():
     p.add_argument("--data-root", type=str, default="",
                    help="Folder of mirror (optional). If empty, downloads via kagglehub.")
     p.add_argument("--out-dir", type=str, default="./runs", help="Where to save logs/ckpts.")
-    p.add_argument("--epochs", type=int, default=35)  # <-- changed to 35
-    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--epochs", type=int, default=50)   
+    p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--img-size", type=int, default=256, help="Use 256 (mirror native) or 384.")
