@@ -631,7 +631,7 @@ def parse_args():
                    help="Folder of mirror (optional). If empty, downloads via kagglehub.")
     p.add_argument("--out-dir", type=str, default="./runs", help="Where to save logs/ckpts.")
     p.add_argument("--epochs", type=int, default=35)
-    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=5e-4)                # ↑ default LR
     p.add_argument("--weight-decay", type=float, default=2e-4)      # ↑ default WD
     p.add_argument("--img-size", type=int, default=256, help="256 (mirror) or larger like 320/384.")
@@ -643,7 +643,7 @@ def parse_args():
     p.add_argument("--embed-batch", type=int, default=512)
     p.add_argument("--embed-max", type=int, default=20000,
                    help="Max samples for embedding (None = all).")
-    p.add_argument("--workers", type=int, default=0,
+    p.add_argument("--workers", type=int, default=4,
                    help="Dataloader workers (Windows-safe default=0).")
     p.add_argument("--val-size",  type=float, default=0.15,
                    help="Validation share of the whole dataset.")
@@ -654,7 +654,7 @@ def parse_args():
                    help="Force device. 'auto' picks CUDA if available, else MPS, else CPU.")
 
     # Testing cadence, early stop, LR response to drops
-    p.add_argument("--test-every", type=int, default=5, help="Test cadence (epochs).")
+    p.add_argument("--test-every", type=int, default=3, help="Test cadence (epochs).")
     p.add_argument("--early-stop-acc", type=float, default=0.80,
                    help="Early stop on test acc ≥ this.")
     p.add_argument("--lr-decay-on-drop", action="store_true",
