@@ -630,14 +630,14 @@ def parse_args():
     p.add_argument("--data-root", type=str, default="",
                    help="Folder of mirror (optional). If empty, downloads via kagglehub.")
     p.add_argument("--out-dir", type=str, default="./runs", help="Where to save logs/ckpts.")
-    p.add_argument("--epochs", type=int, default=35)
+    p.add_argument("--epochs", type=int, default=60)
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=5e-4)                # ↑ default LR
-    p.add_argument("--weight-decay", type=float, default=2e-4)      # ↑ default WD
+    p.add_argument("--lr", type=float, default=1e-3)                # ↑ default LR
+    p.add_argument("--weight-decay", type=float, default=1e-4)      # ↑ default WD
     p.add_argument("--img-size", type=int, default=256, help="256 (mirror) or larger like 320/384.")
     p.add_argument("--pn-pp-nn", type=float, nargs=3, default=(0.75,0.125,0.125),
                    help="Default pair mix when schedule disabled: PN, PP, NN")
-    p.add_argument("--save-every", type=int, default=2)
+    p.add_argument("--save-every", type=int, default=1)
     p.add_argument("--embed-every", type=int, default=1,            # embed every epoch (helps HNM cadence)
                    help="Prototype eval every N epochs (0/neg to disable).")
     p.add_argument("--embed-batch", type=int, default=512)
@@ -654,16 +654,16 @@ def parse_args():
                    help="Force device. 'auto' picks CUDA if available, else MPS, else CPU.")
 
     # Testing cadence, early stop, LR response to drops
-    p.add_argument("--test-every", type=int, default=3, help="Test cadence (epochs).")
+    p.add_argument("--test-every", type=int, default=1, help="Test cadence (epochs).")
     p.add_argument("--early-stop-acc", type=float, default=0.80,
                    help="Early stop on test acc ≥ this.")
     p.add_argument("--lr-decay-on-drop", action="store_true",
                    help="Reduce LR if test acc falls.")
     p.add_argument("--drop-tolerance", type=float, default=0.003,   # tighter default
                    help="Min absolute drop to trigger LR decay.")
-    p.add_argument("--lr-decay-factor", type=float, default=0.5,
+    p.add_argument("--lr-decay-factor", type=float, default=0.25,
                    help="Multiply LR by this on drop.")
-    p.add_argument("--lr-min", type=float, default=1e-6,
+    p.add_argument("--lr-min", type=float, default=5e-6,
                    help="Lower bound for LR.")
 
     # Mix schedule (optional)
