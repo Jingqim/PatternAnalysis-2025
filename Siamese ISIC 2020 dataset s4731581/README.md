@@ -1,6 +1,6 @@
 # Classifying Melanoma with Siamese Network and ResNet18 using Resized ISIC 2020 Challenge Dataset
 ![header](https://github.com/user-attachments/assets/41b71a67-a45e-4183-a437-9d65e9aa4461)
-
+Jingqi Mao s4731581
 ## Problem
 The ISIC 2020 challenge dataset is a dataset of images of skin cancer (Melanoma). This project addresses binary melanoma recognition on a publicly available resized ISIC 2020 challenge dataset. The objective is to learn an image similarity function that separates malignant from benign lesions and to report accuracy and ROCAUC on a separated and balanced test set.  
 
