@@ -632,7 +632,7 @@ def parse_args():
     p.add_argument("--out-dir", type=str, default="./runs", help="Where to save logs/ckpts.")
     p.add_argument("--epochs", type=int, default=60)
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=1e-3)                # ↑ default LR
+    p.add_argument("--lr", type=float, default=3e-3)                # ↑ default LR
     p.add_argument("--weight-decay", type=float, default=1e-4)      # ↑ default WD
     p.add_argument("--img-size", type=int, default=256, help="256 (mirror) or larger like 320/384.")
     p.add_argument("--pn-pp-nn", type=float, nargs=3, default=(0.75,0.125,0.125),
@@ -645,9 +645,9 @@ def parse_args():
                    help="Max samples for embedding (None = all).")
     p.add_argument("--workers", type=int, default=4,
                    help="Dataloader workers (Windows-safe default=0).")
-    p.add_argument("--val-size",  type=float, default=0.15,
+    p.add_argument("--val-size",  type=float, default=0.20,
                    help="Validation share of the whole dataset.")
-    p.add_argument("--test-size", type=float, default=0.15,
+    p.add_argument("--test-size", type=float, default=0.10,
                    help="Test share of the whole dataset.")
     p.add_argument("--device", type=str, default="auto",
                    choices=["auto","cuda","cpu","mps"],
@@ -661,9 +661,9 @@ def parse_args():
                    help="Reduce LR if test acc falls.")
     p.add_argument("--drop-tolerance", type=float, default=0.003,   # tighter default
                    help="Min absolute drop to trigger LR decay.")
-    p.add_argument("--lr-decay-factor", type=float, default=0.25,
+    p.add_argument("--lr-decay-factor", type=float, default=0.15,
                    help="Multiply LR by this on drop.")
-    p.add_argument("--lr-min", type=float, default=5e-6,
+    p.add_argument("--lr-min", type=float, default=1e-5,
                    help="Lower bound for LR.")
 
     # Mix schedule (optional)
@@ -674,11 +674,11 @@ def parse_args():
 
     # EMA
     p.add_argument("--ema", action="store_true", help="Use EMA weights for eval and HNM.")
-    p.add_argument("--ema-decay", type=float, default=0.995, help="EMA decay (0..1).")
+    p.add_argument("--ema-decay", type=float, default=0.9, help="EMA decay (0..1).")
 
     # HNM (defaults set for continuous mining after warmup)
     p.add_argument("--hnm", action="store_true", help="Enable hard negative mining.")
-    p.add_argument("--hnm-start", type=int, default=8, help="First epoch to build HNM pool.")
+    p.add_argument("--hnm-start", type=int, default=5, help="First epoch to build HNM pool.")
     p.add_argument("--hnm-every", type=int, default=1, help="Rebuild HNM pool every N epochs.")
     p.add_argument("--hnm-frac", type=float, default=0.7, help="Fraction of PN pairs drawn from HNM pool.")
     p.add_argument("--hnm-topk", type=int, default=10, help="Top-k hardest negatives per positive.")
@@ -686,7 +686,7 @@ def parse_args():
     p.add_argument("--hnm-max-neg", type=int, default=4000, help="Max negatives to embed for HNM.")
     p.add_argument("--hnm-embed-batch", type=int, default=512, help="Batch size for HNM embeddings.")
 
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, default=67)
     return p.parse_args()
 
 if __name__ == "__main__":
