@@ -1,4 +1,4 @@
-# Classifying Melanoma with Siamese network and Resnet18 using the resized ISIC 2020 challenge dataset
+# Classifying Melanoma with Siamese Network and ResNet18 using Resized ISIC 2020 Challenge Dataset
 ![header](https://github.com/user-attachments/assets/41b71a67-a45e-4183-a437-9d65e9aa4461)
 
 ## Problem
