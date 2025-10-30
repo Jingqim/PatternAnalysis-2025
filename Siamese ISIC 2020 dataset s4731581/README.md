@@ -1,4 +1,5 @@
 # Classifying Melanoma with Siamese network and Resnet18 using the resized ISIC 2020 challenge dataset
+![header](https://github.com/user-attachments/assets/41b71a67-a45e-4183-a437-9d65e9aa4461)
 
 ## Problem
 The ISIC 2020 challenge dataset is a dataset of images of skin cancer (Melanoma). This project addresses binary melanoma recognition on a publicly available resized ISIC 2020 challenge dataset. The objective is to learn an image similarity function that separates malignant from benign lesions and to report accuracy and ROCAUC on a separated and balanced test set.  
@@ -8,6 +9,7 @@ The dataset is from Kaggle: https://www.kaggle.com/datasets/ziadloo/isic-2020-25
 
 ## Siamese network
 Unlike traditional CNNs that classifies images using labels and predicting classes directly, the Siamese network learns a similarity function and uses that to perform classification. Two identical encoder networks with shared wrights were used to turn the images into L2 normalised embeddings, which is them compared cosine similarity. The training feeds three combinations of image pairs including positive-negative, negative-negative and positive-positive. The network then uses a binary loss to learn the difference between these pairs, thus telling the positive and negative images apart.  
+<img width="629" height="265" alt="image" src="https://github.com/user-attachments/assets/8ca22b39-c1a0-48c5-b921-03186b8832c1" />
 
 (Nag, 2022) 
 
@@ -53,12 +55,16 @@ https://download.pytorch.org/whl/cu128
 
 ## Results 
 The testing accuracy got to 0.75 at around 20 epochs before dropping down to 0.65 later on. This is most likely due to the model overfitting the training data since validation accuracy stayed around 0.9 and kept increasing after 20 epochs whilst train losses also remained very low after 20 epochs.  
+<img width="625" height="353" alt="image" src="https://github.com/user-attachments/assets/60dd4563-56ea-4fce-9d7e-9d1991e97748" />
+<img width="643" height="739" alt="image" src="https://github.com/user-attachments/assets/2fe35961-eb18-443f-a09c-f17d64721ed7" />
 
 Validation pair loss measures how the model distinguishes between same or different class when processing validation images. Early epochs with high values indicating an high initial learning rate may overshoot between epochs, flatten and suddenly peaking 
 
 at around 20 epoch may suggest some overfitting occurring in the training data.  
+<img width="620" height="360" alt="image" src="https://github.com/user-attachments/assets/cb183aec-7017-4e61-acd3-d378e1ff8444" />
 
 AUCROC measures the probability of a false positive from the trained data. Missing data in the validation result is due to occasional NaN readings from the model, which is the result of missing class in the evaluated subset. The AUCROC result of both validation and testing data showed a decreasing trend at around 20 epoch, suggesting overfitting occurring.  
+<img width="685" height="726" alt="image" src="https://github.com/user-attachments/assets/118b59f2-bc84-4e4c-a710-6da9a810de41" />
 
 ## Reproducibility
 Use seed 67, current results trained on Nvidia RTX 2080 8GB, expected around 0.7 test accuracy in 2 to 3 hours of training, with default parameter settings currently inside train.py. 
