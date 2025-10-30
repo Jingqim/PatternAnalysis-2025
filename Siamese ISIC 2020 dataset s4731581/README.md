@@ -13,9 +13,6 @@ Unlike traditional CNNs that classifies images using labels and predicting class
 
 (Nag, 2022) 
 
-https://www.kaggle.com/datasets/ziadloo/isic-2020-256x256
-https://www.kaggle.com/datasets/ziadloo/isic-2020-256x256
-
 ## ResNet 18
 ResNet18 is a residual CNN with an 18 layer setup and uses skipping connections to improve image training. It is made up of 3 by 3 convolution layers and max pools. The use of skipping connections helps the gradients to flow though the network easier, allowing for more efficient training. (Residual Networks (ResNet) - Deep Learning, 2025) 
 
