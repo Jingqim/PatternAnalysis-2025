@@ -39,12 +39,12 @@ Python 3.13
 
 CUDA 12.8 supported Pytorch 
 
-pandas numpy scikit-learn pillow tqdm kagglehub 
+pandas numpy scikit-learn pillow tqdm kagglehub matplotlib
 
 install dependencies via pip: 
 
 ```
-pip install pandas numpy scikit-learn pillow tqdm kagglehub 
+pip install pandas numpy scikit-learn pillow tqdm kagglehub matplotlib
 
 pip install pip3 install torch torchvision --index-url 
 https://download.pytorch.org/whl/cu128 
